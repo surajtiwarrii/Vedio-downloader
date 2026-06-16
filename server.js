@@ -20,6 +20,43 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Simple health check so UptimeRobot can keep the server awake
 app.get('/ping', (req, res) => res.json({ status: 'alive', time: Date.now() }));
 
+// Force-download proxy: streams the remote file through our server with a
+// Content-Disposition header so the browser saves it instead of playing it.
+app.get('/download', async (req, res) => {
+  const fileUrl = req.query.url;
+  const filename = (req.query.name || 'video').replace(/[^\w.\-]/g, '_');
+  if (!fileUrl || !/^https?:\/\//i.test(fileUrl)) {
+    return res.status(400).send('Invalid URL');
+  }
+  try {
+    const upstream = await fetch(fileUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+    });
+    if (!upstream.ok || !upstream.body) {
+      return res.status(502).send('Could not fetch the file.');
+    }
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader(
+      'Content-Type',
+      upstream.headers.get('content-type') || 'application/octet-stream'
+    );
+    const len = upstream.headers.get('content-length');
+    if (len) res.setHeader('Content-Length', len);
+
+    // Stream the response body to the client
+    const reader = upstream.body.getReader();
+    const pump = async () => {
+      const { done, value } = await reader.read();
+      if (done) return res.end();
+      res.write(Buffer.from(value));
+      return pump();
+    };
+    await pump();
+  } catch (e) {
+    res.status(500).send('Download failed.');
+  }
+});
+
 // Helper: run yt-dlp and return parsed JSON metadata
 function getVideoInfo(url) {
   return new Promise((resolve, reject) => {
