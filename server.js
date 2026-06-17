@@ -13,6 +13,23 @@ const PORT = process.env.PORT || 3000;
 // Path to the yt-dlp binary (downloaded during build — see package.json / build step)
 const YTDLP = process.env.YTDLP_PATH || path.join(__dirname, 'bin', 'yt-dlp');
 
+// Optional cookies file (needed for YouTube, which blocks server downloads).
+// Place a Netscape-format cookies.txt in the project root, OR set the
+// YOUTUBE_COOKIES env var on Render with the file contents.
+const fs = require('fs');
+const COOKIES_PATH = path.join(__dirname, 'cookies.txt');
+if (process.env.YOUTUBE_COOKIES && !fs.existsSync(COOKIES_PATH)) {
+  try {
+    fs.writeFileSync(COOKIES_PATH, process.env.YOUTUBE_COOKIES);
+  } catch (e) {
+    console.warn('Could not write cookies file:', e.message);
+  }
+}
+const HAS_COOKIES = fs.existsSync(COOKIES_PATH);
+
+const UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -61,9 +78,22 @@ app.get('/download', async (req, res) => {
 function getVideoInfo(url) {
   return new Promise((resolve, reject) => {
     // -J = dump full info as JSON, no download
+    const args = [
+      '-J',
+      '--no-warnings',
+      '--no-playlist',
+      '--user-agent', UA,
+      // Use the android client which is less aggressively bot-checked
+      '--extractor-args', 'youtube:player_client=android,web',
+    ];
+    if (HAS_COOKIES) {
+      args.push('--cookies', COOKIES_PATH);
+    }
+    args.push(url);
+
     execFile(
       YTDLP,
-      ['-J', '--no-warnings', '--no-playlist', url],
+      args,
       { maxBuffer: 1024 * 1024 * 20, timeout: 60000 },
       (err, stdout, stderr) => {
         if (err) {
